@@ -1,16 +1,16 @@
 // ============================================================
 // Vercel Serverless Function - Telegram → Apps Script Proxy
-// Fix: Timeout 9 detik + redirect follow + log detail
+// Fix: Fire-and-forget, tidak nunggu Apps Script selesai
 // ============================================================
 
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyFsws3lfhQ6Ywtl0d6uCK_nSql4lnPEVeaUQL2k_odtcvj7yR0f-wvVt91g94jozIENA/exec';
 
 export const config = {
-  maxDuration: 10, // Vercel Hobby max 10 detik
+  maxDuration: 30, // max 30 detik
 };
 
 export default async function handler(req, res) {
-  // GET request (test di browser)
+  // GET request
   if (req.method === 'GET') {
     return res.status(200).json({
       ok: true,
@@ -24,40 +24,31 @@ export default async function handler(req, res) {
   }
 
   const updateId = req.body?.update_id || '-';
-  console.log(`[${updateId}] === REQUEST MASUK ===`);
+  console.log(`[${updateId}] MASUK`);
 
+  // ===== 1. BALAS INSTAN KE TELEGRAM DULU =====
+  res.status(200).json({ ok: true });
+
+  // ===== 2. FORWARD KE APPS SCRIPT DI BACKGROUND =====
   try {
     const body = JSON.stringify(req.body);
     console.log(`[${updateId}] Forwarding ${body.length} bytes`);
 
-    // ===== FETCH DENGAN TIMEOUT 9 DETIK =====
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 9000);
-
-    const startTime = Date.now();
-    const response = await fetch(APPS_SCRIPT_URL, {
+    // Fire-and-forget: TANPA await, biar Vercel gak tunggu
+    fetch(APPS_SCRIPT_URL, {
       method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'User-Agent': 'Vercel-Proxy/1.0'
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: body,
-      signal: controller.signal,
       redirect: 'follow',
-    });
-
-    clearTimeout(timeoutId);
-    const duration = Date.now() - startTime;
-    console.log(`[${updateId}] Apps Script HTTP ${response.status} (${duration}ms)`);
-
-    // Baca response body untuk debug (kalau ada error)
-    const responseText = await response.text();
-    console.log(`[${updateId}] Response: ${responseText.substring(0, 200)}`);
+    })
+      .then(r => {
+        console.log(`[${updateId}] Apps Script: ${r.status}`);
+      })
+      .catch(e => {
+        console.error(`[${updateId}] Forward err: ${e.message}`);
+      });
 
   } catch (err) {
-    console.error(`[${updateId}] FORWARD ERROR: ${err.name} - ${err.message}`);
+    console.error(`[${updateId}] Error: ${err.message}`);
   }
-
-  // ===== SELALU BALAS 200 OK KE TELEGRAM =====
-  return res.status(200).json({ ok: true });
 }
